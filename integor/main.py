@@ -33,7 +33,7 @@ def set_variable_names(variable_names_in : List[str]) -> None:
 
 class Cost:
     """Wrapper around np.ndarray, with a LinearExpression signature and a __repr__ method"""
-    def __init__(self, expression : "LinearExpression") -> None:
+    def __init__(self, expression : "Variable") -> None:
         self.expression = expression
         # Reconstruct the cost matrix from the expression
         cost_matrix = np.zeros(n_variables)
@@ -48,73 +48,95 @@ class Cost:
 
 class Constraint(LinearConstraint):
     """Wrapper around scipy.optimize.LinearConstraint, with a signature in LinearExpression and a __repr__ method"""
-    def __init__(self, expression : "LinearExpression", lb : float, ub : float) -> None:
-        self.expression = expression
-        # Reconstruct constraint vector for scipy.optimize.LinearConstraint
+    def __init__(self, expression : "Variable", lb : float, ub : float) -> None:
+        # Reconstruct constraint vector for scipy.optimize.LinearConstraint, ignoring the constant term
         self.constraint_vector = np.zeros(n_variables)
-        for name, coefficient in zip(self.expression.names, self.expression.coefficients):
-            self.constraint_vector[names_to_idx[name]] = coefficient
-        super().__init__(self.constraint_vector, lb, ub)
+        for name, coefficient in expression.content.items():
+            if name != Variable.unit_name:
+                self.constraint_vector[names_to_idx[name]] = coefficient
+        # Remove the constant term from the two bounds
+        if Variable.unit_name in expression.content:
+            lb -= expression.content[Variable.unit_name]
+            ub -= expression.content[Variable.unit_name]
+        # Call the parent constructor
+        super().__init__(A=self.constraint_vector, lb=lb, ub=ub)
 
     def __repr__(self) -> str:
-        return f"Constraint({self.lb[0]} <= {self.expression} <= {self.ub[0]})"
+        # Reconstruct the expression from the constraint vector
+        expression = Variable.get_constant_null()
+        for idx, coefficient in enumerate(self.constraint_vector):
+            if coefficient != 0:
+                expression += coefficient * Variable(idx_to_names[idx]) 
+        return f"Constraint({self.lb[0]} <= {expression} <= {self.ub[0]})"
 
 
+class Variable:
 
-class LinearExpression:
+    unit_name = '1'
 
-    def __init__(self, names, coefficients) -> None:
-        self.names = names
-        self.coefficients = coefficients
+    def __init__(self, 
+            name : str = None, 
+            value : Union[int, float] = None, 
+            variables : List["Variable"] = None, coefficients : List[float] = None,
+                ) -> None:
+        assert int(name is None) + int(variables is None) + int(value is None) == 2, "Provide one among name, value or variables/coefficients as non None"
+        if variables is None: assert coefficients is None and len(coefficients) == len(variables), "Provide both variables and coefficients if creating a variable from other variables, of the same length"
 
-    # Define operations between LinearExpression, Variable and float/int
-    def __mul__(self, other):
-        if isinstance(other, int) or isinstance(other, float):
-            coefficients = [other * c for c in self.coefficients]
-            if other == 0:
-                return LinearExpression([], [])
-            else:
-                return LinearExpression(self.names, coefficients)
+        if name is not None:
+            self.name = name
+            self.content = {name: 1} 
+        
+        elif value is not None:
+            self.name = None
+            self.content = {self.unit_name: value}
+
+        elif variables is not None:
+            self.name = None
+            self.content = {}
+            # Add variables to content
+            for variable, coefficient in zip(variables, coefficients):
+                for name, value in variable.content.items():
+                    if name in self.content:
+                        self.content[name] += coefficient * value
+                    else:
+                        self.content[name] = coefficient * value
+            # Remove 0 coefficients
+            self.content = {name: value for name, value in self.content.items() if value != 0}
+
+        else:
+            raise ValueError("Provide one among name, value or variables/coefficients as non None")
+
+    @classmethod
+    def get_constant_unit(cls):
+        return Variable(value=1)
+    
+    @classmethod
+    def get_constant_null(cls):
+        return Variable(value=0)
+
+    # Multiplication : can happen between a variable and a number only.
+    def __mul__(self, other) -> "Variable":
+        if isinstance(other, Variable):
+            raise TypeError("Cannot multiply two variables.")
+        elif isinstance(other, (int, float)):
+            return Variable(variables=[self], coefficients=[other])
         else:
             raise TypeError(f"Cannot multiply {type(self)} and {type(other)}")
-
     def __rmul__(self, other):
         return self * other
 
+    # Addition : can happen between a variable and a number or between two variables
     def __add__(self, other):
-        if isinstance(other, LinearExpression):
-            names = []
-            coefficients = []
-            # Add variable of first expression. If variable is in second expression, add coefficient
-            for name, coefficient in zip(self.names, self.coefficients):
-                if name in other.names:
-                    names.append(name)
-                    coefficients.append(coefficient + other.coefficients[other.names.index(name)])
-                else:
-                    names.append(name)
-                    coefficients.append(coefficient)
-            # Add variable of second expression if not in first expression (already added)
-            for name, coefficient in zip(other.names, other.coefficients):
-                if name not in names:
-                    names.append(name)
-                    coefficients.append(coefficient)
-            # Remove 0 coefficients
-            names = [n for n, c in zip(names, coefficients) if c != 0]
-            coefficients = [c for c in coefficients if c != 0]
-            return LinearExpression(names, coefficients)
-
-        elif isinstance(other, Variable):
-            return self + other.as_linear_expression()
-
+        if isinstance(other, Variable):
+            return Variable(variables=[self, other], coefficients=[1, 1])
+        elif isinstance(other, (int, float)):
+            return Variable(variables=[self, self.get_constant_unit()], coefficients=[1, other])
         else:
             raise TypeError(f"Cannot add {type(self)} and {type(other)}")
-    
     def __radd__(self, other):
         return self + other
-
     def __sub__(self, other):
         return self + (-1 * other)
-
     def __rsub__(self, other):
         return self - other
 
@@ -122,96 +144,71 @@ class LinearExpression:
     def __le__(self, other : float):
         if isinstance(other, int) or isinstance(other, float):
             return Constraint(self, -np.inf, other)
+        elif isinstance(other, Variable):
+            return self - other <= 0
+        elif isinstance(other, Variable):
+            return self - other <= 0
         else:
             raise TypeError(f"Cannot compare {type(self)} and {type(other)}")
     
     def __ge__(self, other : float):
         if isinstance(other, int) or isinstance(other, float):
             return Constraint(self, other, np.inf)
+        elif isinstance(other, Variable):
+            return self - other >= 0
+        elif isinstance(other, Variable):
+            return self - other >= 0
         else:
             raise TypeError(f"Cannot compare {type(self)} and {type(other)}")
 
     def __eq__(self, other : float):
         if isinstance(other, int) or isinstance(other, float):
             return Constraint(self, other, other)
+        elif isinstance(other, Variable):
+            return self - other == 0
+        elif isinstance(other, Variable):
+            return self - other == 0
         else:
             raise TypeError(f"Cannot compare {type(self)} and {type(other)}")
 
     # Repr
     def __repr__(self) -> str:
-        empty = ''
-        exp = f"Expression({' + '.join([f'{empty if c == 1 else c} {n}' for c, n in zip(self.coefficients, self.names)])} )"
-        return exp
-
-
-
-class Variable:
-
-    def __init__(self, name : str) -> None:
-        if not isinstance(name, str):
-            raise TypeError("Variable name must be a string")
-        assert variable_names is not None, "Variable names must be set before creating variables"
-        assert name in variable_names, f"Variable name {name} not in variable_names"
-        self.name = name
-    
-    def __add__(self, other : "Variable") -> LinearExpression:
-        if isinstance(other, Variable):
-            return LinearExpression([self.name, other.name], [1, 1])
-        elif isinstance(other, LinearExpression):
-            return other + self
+        if self.name is not None:
+            return self.name
+        elif len(self.content) != 0:
+            res = ''
+            for name, value in self.content.items():
+                if name == self.unit_name:
+                    res += f' + {value}'
+                elif value == 1:
+                    res += f' + {name}'
+                else:
+                    res += f' + {value} * {name}'
+            return res[3:]
         else:
-            raise TypeError("Cannot add a non-variable to a variable")
+            return '0'
 
-    def __radd__(self, other : "Variable") -> LinearExpression:
-        if isinstance(other, Variable):
-            return other + self
-        else:
-            raise TypeError("Cannot add a non-variable to a variable")
 
-    def __sub__(self, other : "Variable") -> LinearExpression:
-        if isinstance(other, Variable):
-            return LinearExpression([self.name, other.name], [1, -1])
-        else:
-            raise TypeError("Cannot subtract a non-variable from a variable")
-
-    def __rsub__(self, other : "Variable") -> LinearExpression:
-        if isinstance(other, Variable):
-            return other - self
-        else:
-            raise TypeError("Cannot subtract a variable from a non-variable")
-
-    def __mul__(self, coeff : float) -> LinearExpression:
-        if isinstance(coeff, int) or isinstance(coeff, float):
-            return LinearExpression([self.name], [coeff])
-        else:
-            raise TypeError("Cannot multiply a variable by a non-number")
-    
-    def __rmul__(self, coeff : float) -> LinearExpression:
-        if isinstance(coeff, int) or isinstance(coeff, float):
-            return self * coeff
-        else:
-            raise TypeError("Cannot multiply a variable by a non-number")
-
-    # As Linear Expression
-    def as_linear_expression(self) -> LinearExpression:
-        return LinearExpression([self.name], [1])
-
-    # Repr
-    def __repr__(self) -> str:
-        return f"Variable({self.name})"
-
+def get_cost_matrix(expression : Variable):
+    cost_matrix = np.zeros((n_variables,))
+    for name, coefficient in expression.content.items():
+        if name != Variable.unit_name:
+            cost_matrix[names_to_idx[name]] = coefficient
+    if Variable.unit_name in expression.content and expression.content[Variable.unit_name] != 0:
+        print(f"Warning : the constant term {expression.content[Variable.unit_name]} of the expression {expression} for get_cost_matrix is ignored, as the optimization doesn't change to a constant term. The function optimized will actually be {expression - expression.content[Variable.unit_name]}")
+    return cost_matrix
 
 
 def solve_ilp(
     cost_matrix : np.ndarray,
     constraints : List[Constraint],
     integrality : Union[List[int], int] = 1,    # 1 = integer, 0 = continuous
-    bounds : Optional[Tuple[float, float]] = None,
+    bounds : Optional[Tuple[float, float]] = (0, 1),
     ):
     return milp(c = cost_matrix, constraints=constraints, integrality=integrality, bounds=bounds)
 
 
-def get_solution(solution_vector) -> Dict[str, float]:
+def get_solution(solution_vector : np.ndarray) -> Dict[str, float]:
     """Get the solution as a dictionary"""
     solution = {}
     for i, name in enumerate(variable_names):
@@ -219,14 +216,21 @@ def get_solution(solution_vector) -> Dict[str, float]:
     return solution
 
 
-
 if __name__ == "__main__":
     set_variable_names(["x0", "x1", "x2", "x3"])
-    x0 = Variable("x0")
-    x1 = Variable("x1")
-    x2 = Variable("x2")
+    x0 = Variable(name = "x0")
+    x1 = Variable(name = "x1")
+    x2 = Variable(name = "x2")
 
-    my_expression = x0 - x1 + 2 * x2 + x1
-    my_constraint = my_expression <= 2
-    print(my_expression)
+    
+    print(x0 + 2 * x2 + x1)
+    print(1 + x0)
+    print(5*x1)
+    print(0 * x0)
+    print(x0 - x0)
+    print(x0 - 1)
+    print(x0 - x0 + 4)
+    my_constraint = x0 + 2 * x2 + x1 + 5 <= 2
     print(my_constraint)
+    print(get_cost_matrix(x0 + 2 * x2 + x1 ))
+    print(get_cost_matrix(x0 + 2 * x2 + x1 + 5))

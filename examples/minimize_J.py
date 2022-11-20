@@ -30,7 +30,7 @@ def verify(x):
 
 
 # ==================== SOLVE PIPELINE ====================
-from integor import set_variable_names, Variable, Cost, solve_ilp, get_solution
+from integor import set_variable_names, Variable, get_cost_matrix, solve_ilp, get_solution
 
 # Set the names of the variables
 set_variable_names(["x0", "x1", "x2", "x3"])
@@ -49,7 +49,7 @@ constraint4 = x1 + x3 == 1
 constraints = [constraint1, constraint2, constraint3, constraint4]
 
 # Define the cost from the variables
-cost_matrix = Cost(x0 + 2 * x1 + 3 * x2 + 4 * x3).cost_matrix
+cost_matrix = get_cost_matrix(x0 + 2 * x1 + 3 * x2 + 4 * x3)
 
 # Integrality - type of the solution : 0 for continuous, 1 for integer-bounded
 integrality = np.ones(len(cost_matrix)) * 1  # You can let this as is

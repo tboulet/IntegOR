@@ -1,4 +1,4 @@
-from integor import set_variable_names, Cost, Variable, LinearExpression, Constraint
+from integor import set_variable_names, Cost, Variable, Variable, Constraint
 
 set_variable_names(["x0", "x1", "x2", "x3"])
 

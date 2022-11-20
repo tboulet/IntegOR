@@ -1,5 +1,5 @@
 # IntegOR
-IntegOR is a framework based on scipy.optimize that aims to traduce an Operation Research that can be linearized to a linear problem, to solve it.
+IntegOR is a framework based on scipy.optimize that aims to traduce an Operation Research problem that can be linearized to a binary integer linear problem, to solve it.
 
 The interest is the ability to easily define your variables as strings and to, from here, create easily constraints and cost vector.
 
@@ -34,7 +34,7 @@ def g(x):
 ```
 ### Import
 ```python
-from integor import set_variable_names, Variable, Cost, solve_ilp, get_solution
+from integor import set_variable_names, Variable, get_cost_matrix, solve_ilp, get_solution
 ```
 
 ### Set variable names
@@ -61,12 +61,12 @@ constraints = [constraint1, constraint2, constraint3, constraint4]
 
 ### Define the cost from the variables
 ```python
-cost_matrix = Cost(x0 + 2 * x1 + 3 * x2 + 4 * x3).cost_matrix
+cost_matrix = get_cost_matrix(x0 + 2 * x1 + 3 * x2 + 4 * x3)
 ```
 
 ### Specify integrality ie type of the solution : 0 for continuous, 1 for integer-bounded
 ```python
-integrality = np.ones(len(cost_matrix)) * 1  # You can let this as is
+integrality = np.ones(len(cost_matrix)) * 1  # You can let this as it is
 ```
 
 ### Solve the problem
